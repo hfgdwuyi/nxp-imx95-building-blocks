@@ -1,0 +1,17 @@
+[Unit]
+Description=Building Blocks - Boot OK Handshake
+After=bb-busd.service multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '\
+  fw_setenv boot_ok 1 && \
+  fw_setenv boot_attempt 3 && \
+  echo "Boot OK: slot=$$(fw_printenv boot_slot)"'
+RemainAfterExit=yes
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

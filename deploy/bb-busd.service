@@ -1,0 +1,17 @@
+[Unit]
+Description=Building Blocks Message Bus Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/building-blocks/bin/bb-busd
+Restart=on-failure
+RestartSec=2s
+WatchdogSec=30s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bb-busd
+
+[Install]
+WantedBy=multi-user.target

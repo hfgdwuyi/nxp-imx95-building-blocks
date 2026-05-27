@@ -1,0 +1,15 @@
+[Unit]
+Description=Building Blocks - Time Synchronization Monitor
+Requires=systemd-timesyncd.service
+After=systemd-timesyncd.service
+
+[Service]
+Type=simple
+ExecStart=/opt/building-blocks/bin/bb-cli pub /system/time '{"synced":true}'
+Restart=on-failure
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

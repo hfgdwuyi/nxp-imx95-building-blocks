@@ -1,0 +1,18 @@
+[Unit]
+Description=Building Blocks - LED Controller
+Requires=bb-busd.service
+After=bb-busd.service
+
+[Service]
+Type=simple
+ExecStart=/opt/building-blocks/bin/bb-led
+Restart=on-failure
+RestartSec=2s
+WatchdogSec=30s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bb-led
+
+[Install]
+WantedBy=multi-user.target

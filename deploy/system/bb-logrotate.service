@@ -1,0 +1,9 @@
+[Unit]
+Description=Building Blocks - Log Rotation
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate /etc/logrotate.d/building-blocks
+
+[Install]
+WantedBy=multi-user.target

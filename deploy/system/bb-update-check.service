@@ -1,0 +1,8 @@
+[Unit]
+Description=Building Blocks - Update Availability Check
+
+[Service]
+Type=oneshot
+ExecStart=/opt/building-blocks/bin/bb-cli pub /system/update-check '{"action":"check"}'
+StandardOutput=journal
+StandardError=journal

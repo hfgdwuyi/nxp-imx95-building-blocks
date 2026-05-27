@@ -1,0 +1,15 @@
+#!/bin/sh
+# i.MX95 Recovery Mode Minimal /init
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs dev /dev
+
+# Mount persist for crash data access
+mount /dev/mmcblk0p9 /persist
+mount /dev/mmcblk0p11 /var/log
+
+# Start recovery shell on debug UART
+/sbin/getty -L ttyLP0 115200 vt100 &
+echo "i.MX95 Building Blocks Recovery Mode"
+echo "Use 'bb-recovery --interactive' to repair"
+exec /bin/sh

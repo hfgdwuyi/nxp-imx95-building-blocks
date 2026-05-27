@@ -1,0 +1,9 @@
+[Unit]
+Description=Building Blocks - Daily Log Rotation
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

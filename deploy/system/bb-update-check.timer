@@ -1,0 +1,9 @@
+[Unit]
+Description=Building Blocks - Periodic Update Check
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

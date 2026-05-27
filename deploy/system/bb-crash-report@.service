@@ -1,0 +1,8 @@
+[Unit]
+Description=Building Blocks - Crash Report for %i
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo "Block %i crashed at $$(date)" >> /persist/crash/report.log'
+StandardOutput=journal
+StandardError=journal

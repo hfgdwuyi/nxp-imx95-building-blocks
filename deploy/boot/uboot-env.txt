@@ -1,0 +1,17 @@
+# Default U-Boot environment for i.MX95 EVK / Building Blocks
+boot_targets=mmc0
+boot_slot=a
+boot_ok=0
+boot_attempt=3
+boot_limit=3
+boot_alt_slot=b
+recovery_mode=0
+fdt_file=imx95-evk.dtb
+kernel_image=Image
+console=ttyLP0
+baudrate=115200
+mmcdev=0
+boot_a_part=4
+boot_b_part=5
+rootfs_a_part=6
+rootfs_b_part=7
