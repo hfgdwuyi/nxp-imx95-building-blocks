@@ -52,7 +52,8 @@ TARGETS := $(BIN_DIR)/bb-busd $(BIN_DIR)/bb-led $(BIN_DIR)/bb-cli $(BIN_DIR)/bb-
            $(BIN_DIR)/bb-update \
            $(BIN_DIR)/bb-display-test \
            $(BIN_DIR)/bb-audio-test \
-           $(BIN_DIR)/bb-audio-loopback
+           $(BIN_DIR)/bb-audio-loopback \
+           $(BIN_DIR)/bb-webd
 
 .PHONY: all clean deploy cross bbu
 
@@ -62,6 +63,10 @@ all: $(TARGETS)
 
 # ---- Bus daemon (standalone, no libbb) ----
 $(BIN_DIR)/bb-busd: services/bb-busd.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+# ---- Web daemon (standalone HTTP server) ----
+$(BIN_DIR)/bb-webd: services/bb-webd.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # ---- LED block: links block+bus+json+log+hal_led ----
@@ -104,7 +109,7 @@ $(BIN_DIR) $(OBJ_DIR):
 deploy: all
 	@echo "Deploying to $(TARGET_HOST)..."
 	ssh -o StrictHostKeyChecking=no root@$(TARGET_HOST) \
-		"mkdir -p /opt/building-blocks/bin /opt/building-blocks/include /opt/building-blocks/obj"
+		"mkdir -p /opt/building-blocks/bin /opt/building-blocks/include /opt/building-blocks/obj /opt/building-blocks/www"
 	scp -o StrictHostKeyChecking=no \
 		$(BIN_DIR)/* root@$(TARGET_HOST):/opt/building-blocks/bin/
 	scp -o StrictHostKeyChecking=no \
@@ -122,9 +127,10 @@ deploy: all
 		 && ln -sf /opt/building-blocks/bin/bb-cli /usr/bin/bb-cli \
 		 && ln -sf /opt/building-blocks/bin/bb-busd /usr/bin/bb-busd \
 		 && ln -sf /opt/building-blocks/bin/bb-update /usr/bin/bb-update \
+		 && ln -sf /opt/building-blocks/bin/bb-webd /usr/bin/bb-webd \
 		 && systemctl daemon-reload \
-		 && systemctl enable bb-busd bb-led bb-boot-ok bb-health bb-logrotate.timer bb-time-sync bb-update-check.timer \
-		 && systemctl restart bb-busd bb-led"
+		 && systemctl enable bb-busd bb-led bb-boot-ok bb-health bb-logrotate.timer bb-time-sync bb-update-check.timer bb-webd \
+		 && systemctl restart bb-busd bb-led bb-webd"
 	@echo "Deploy complete."
 
 # Cross-compile for aarch64
