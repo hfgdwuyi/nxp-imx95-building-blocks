@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 
 int bb_update_create(const bb_update_config_t *cfg)
 {

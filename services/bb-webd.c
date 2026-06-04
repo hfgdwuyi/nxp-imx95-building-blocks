@@ -121,9 +121,9 @@ static void jw_raw(jw_t *j, const char *s) {
     if (j->pos + len < j->cap) { memcpy(j->buf + j->pos, s, len); j->pos += len; j->buf[j->pos] = '\0'; }
 }
 static void jw_obj_start(jw_t *j) { jw_raw(j, "{"); j->first = 1; }
-static void jw_obj_end(jw_t *j)   { jw_raw(j, "}"); }
+static void jw_obj_end(jw_t *j)   { jw_raw(j, "}"); j->first = 0; }
 static void jw_arr_start(jw_t *j) { jw_raw(j, "["); j->first = 1; }
-static void jw_arr_end(jw_t *j)   { jw_raw(j, "]"); }
+static void jw_arr_end(jw_t *j)   { jw_raw(j, "]"); j->first = 0; }
 static void jw_comma(jw_t *j)     { if (!j->first) jw_raw(j, ","); j->first = 0; }
 static void jw_kv_str(jw_t *j, const char *k, const char *v) {
     jw_comma(j);
@@ -247,7 +247,7 @@ static void handle_api_cpu(int fd) {
     char json[4096];
     jw_t j;
     jw_init(&j, json, sizeof(json));
-    jw_obj_start(&j);
+    jw_arr_start(&j);
 
     char buf[2048];
     int f = open("/proc/stat", O_RDONLY);
@@ -256,7 +256,6 @@ static void handle_api_cpu(int fd) {
         close(f);
         if (n > 0) {
             buf[n] = '\0';
-            jw_arr_start(&j); j->first = 1;
             char *line, *save;
             for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
                 char name[16];
@@ -276,11 +275,10 @@ static void handle_api_cpu(int fd) {
                     }
                 }
             }
-            jw_arr_end(&j);
         }
     }
 
-    jw_obj_end(&j);
+    jw_arr_end(&j);
     http_nocache(fd, "application/json; charset=utf-8");
     dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(json), json);
 }
@@ -302,7 +300,7 @@ static void handle_api_partitions(int fd) {
     };
     for (int i = 0; mounts[i].mp; i++) {
         if (statfs(mounts[i].mp, &sfs) == 0) {
-            jw_obj_start(&j); j->first = 1;
+            jw_obj_start(&j);
             jw_kv_str(&j, "label",    mounts[i].label);
             jw_kv_str(&j, "mount",    mounts[i].mp);
             jw_kv_int(&j, "total_kb", (long long)((unsigned long long)sfs.f_blocks * sfs.f_bsize) / 1024);
@@ -322,7 +320,7 @@ static void handle_api_network(int fd) {
     char json[4096];
     jw_t j;
     jw_init(&j, json, sizeof(json));
-    jw_obj_start(&j);
+    jw_arr_start(&j);
 
     // Read /proc/net/dev for interface stats
     char buf[4096];
@@ -332,7 +330,6 @@ static void handle_api_network(int fd) {
         close(f);
         if (n > 0) {
             buf[n] = '\0';
-            jw_arr_start(&j); j->first = 1;
             char *save;
             for (char *line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
                 char iface[32];
@@ -356,11 +353,10 @@ static void handle_api_network(int fd) {
                     jw_obj_end(&j);
                 }
             }
-            jw_arr_end(&j);
         }
     }
 
-    jw_obj_end(&j);
+    jw_arr_end(&j);
     http_nocache(fd, "application/json; charset=utf-8");
     dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(json), json);
 }
@@ -370,8 +366,7 @@ static void handle_api_processes(int fd) {
     char json[4096];
     jw_t j;
     jw_init(&j, json, sizeof(json));
-    jw_obj_start(&j);
-    jw_arr_start(&j); j->first = 1;
+    jw_arr_start(&j);
 
     // Simple: just list building-block processes from /proc
     // In production, use popen("ps") - but we avoid fork/exec for size
@@ -417,7 +412,6 @@ static void handle_api_processes(int fd) {
     }
 
     jw_arr_end(&j);
-    jw_obj_end(&j);
     http_nocache(fd, "application/json; charset=utf-8");
     dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(json), json);
 }
@@ -427,11 +421,8 @@ static void handle_api_logs(int fd) {
     char json[8192];
     jw_t j;
     jw_init(&j, json, sizeof(json));
-    jw_obj_start(&j);
-
     // Try reading from journal or log partition
-    // First try dmesg
-    jw_arr_start(&j); j->first = 1;
+    jw_arr_start(&j);
 
     char buf[2048];
     int f = open("/var/log/messages", O_RDONLY);
@@ -452,7 +443,6 @@ static void handle_api_logs(int fd) {
     }
 
     jw_arr_end(&j);
-    jw_obj_end(&j);
     http_nocache(fd, "application/json; charset=utf-8");
     dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(json), json);
 }
