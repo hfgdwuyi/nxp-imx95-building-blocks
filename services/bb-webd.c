@@ -487,7 +487,186 @@ static void handle_api_health(int fd) {
     dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(json), json);
 }
 
-// ---- Embedded dashboard HTML ----
+// ---- Control API handlers ----
+
+// Small helper: atoi with known length (need forward declaration for use in handlers)
+static int atoi_len(const char *s, int len) {
+    int v = 0;
+    for (int i = 0; i < len && s[i] >= '0' && s[i] <= '9'; i++)
+        v = v * 10 + (s[i] - '0');
+    return v;
+}
+
+// POST /api/control/led - body: led=name&brightness=0-255 or led=name&trigger=heartbeat
+static void handle_control_led(int fd, const char *body, int body_len) {
+    char led[64] = {0}, val_str[64] = {0}, trigger[64] = {0};
+    // Simple form parser
+    const char *p = body, *end = body + body_len;
+    while (p < end) {
+        const char *amp = memchr(p, '&', end - p);
+        if (!amp) amp = end;
+        const char *eq = memchr(p, '=', amp - p);
+        if (eq) {
+            int klen = eq - p, vlen = amp - eq - 1;
+            if (klen > 0 && vlen > 0) {
+                if (strncmp(p, "led", klen) == 0 && klen == 3)
+                    { memcpy(led, eq+1, vlen < 63 ? vlen : 63); led[vlen]='\0'; }
+                else if (strncmp(p, "brightness", klen) == 0 && klen == 10)
+                    { memcpy(val_str, eq+1, vlen < 63 ? vlen : 63); val_str[vlen]='\0'; }
+                else if (strncmp(p, "trigger", klen) == 0 && klen == 7)
+                    { memcpy(trigger, eq+1, vlen < 63 ? vlen : 63); trigger[vlen]='\0'; }
+            }
+        }
+        p = amp + 1;
+    }
+
+    if (!led[0]) {
+        http_server_error(fd, "Missing 'led' parameter");
+        return;
+    }
+
+    // Set trigger if specified
+    if (trigger[0]) {
+        char tpath[256];
+        // Validate: only allow known safe trigger values
+        if (strcmp(trigger, "none") == 0 || strcmp(trigger, "heartbeat") == 0 ||
+            strcmp(trigger, "timer") == 0 || strcmp(trigger, "default-on") == 0) {
+            snprintf(tpath, sizeof(tpath), "/sys/class/leds/%s/trigger", led);
+            int tf = open(tpath, O_WRONLY);
+            if (tf >= 0) {
+                write(tf, trigger, strlen(trigger));
+                close(tf);
+            }
+        }
+    }
+
+    // Set brightness
+    if (val_str[0]) {
+        char bpath[256];
+        snprintf(bpath, sizeof(bpath), "/sys/class/leds/%s/brightness", led);
+        int bf = open(bpath, O_WRONLY);
+        if (bf >= 0) {
+            write(bf, val_str, strlen(val_str));
+            close(bf);
+        }
+    }
+
+    http_ok(fd, "application/json; charset=utf-8");
+    const char *resp = "{\"ok\":true}";
+    dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(resp), resp);
+}
+
+// GET /api/leds - list all LEDs
+static void handle_api_leds(int fd) {
+    char json[2048];
+    jw_t j;
+    jw_init(&j, json, sizeof(json));
+    jw_arr_start(&j);
+
+    DIR *d = opendir("/sys/class/leds");
+    if (d) {
+        struct dirent *de;
+        while ((de = readdir(d))) {
+            if (de->d_name[0] == '.') continue;
+            jw_comma(&j);
+            jw_obj_start(&j);
+            jw_kv_str(&j, "name", de->d_name);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "/sys/class/leds/%s/brightness", de->d_name);
+            if (read_proc_line(buf, buf, sizeof(buf)) == 0) jw_kv_int(&j, "brightness", atoi(buf));
+            snprintf(buf, sizeof(buf), "/sys/class/leds/%s/max_brightness", de->d_name);
+            if (read_proc_line(buf, buf, sizeof(buf)) == 0) jw_kv_int(&j, "max", atoi(buf));
+            snprintf(buf, sizeof(buf), "/sys/class/leds/%s/trigger", de->d_name);
+            char trig[256];
+            int tf = open(buf, O_RDONLY);
+            if (tf >= 0) {
+                int n = read(tf, trig, sizeof(trig)-1);
+                if (n > 0) { trig[n]='\0'; char *sq = strchr(trig, '[');
+                    if (sq) { char *eq = strchr(sq, ']'); if (eq) *eq = '\0'; jw_kv_str(&j, "trigger", sq+1); } }
+                close(tf);
+            }
+            jw_obj_end(&j);
+        }
+        closedir(d);
+    }
+
+    jw_arr_end(&j);
+    http_nocache(fd, "application/json; charset=utf-8");
+    dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(json), json);
+}
+
+// GET /api/gpio - list GPIO info
+static void handle_api_gpio(int fd) {
+    char json[4096];
+    jw_t j;
+    jw_init(&j, json, sizeof(json));
+    jw_arr_start(&j);
+
+    for (int chip = 0; chip < 8; chip++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/dev/gpiochip%d", chip);
+        if (access(path, F_OK) != 0) break;
+        jw_comma(&j);
+        jw_obj_start(&j);
+        jw_kv_str(&j, "chip", path);
+        snprintf(path, sizeof(path), "/sys/class/gpio/gpiochip%d/ngpio", chip);
+        char buf[16];
+        if (read_proc_line(path, buf, sizeof(buf)) == 0) jw_kv_int(&j, "lines", atoi(buf));
+        jw_obj_end(&j);
+    }
+
+    jw_arr_end(&j);
+    http_nocache(fd, "application/json; charset=utf-8");
+    dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(json), json);
+}
+
+// POST /api/control/gpio - body: chip=N&line=N&value=0|1
+static void handle_control_gpio(int fd, const char *body, int body_len) {
+    int chip = -1, line = -1, value = -1;
+    const char *p = body, *end = body + body_len;
+    while (p < end) {
+        const char *amp = memchr(p, '&', end - p);
+        if (!amp) amp = end;
+        const char *eq = memchr(p, '=', amp - p);
+        if (eq) {
+            int klen = eq - p, vlen = amp - eq - 1;
+            if (klen == 4 && strncmp(p, "chip", 4) == 0) chip = atoi_len(eq+1, vlen);
+            else if (klen == 4 && strncmp(p, "line", 4) == 0) line = atoi_len(eq+1, vlen);
+            else if (klen == 5 && strncmp(p, "value", 5) == 0) value = atoi_len(eq+1, vlen);
+        }
+        p = amp + 1;
+    }
+
+    if (chip < 0 || line < 0) {
+        http_server_error(fd, "Missing chip/line");
+        return;
+    }
+    if (value != 0 && value != 1) {
+        http_server_error(fd, "value must be 0 or 1");
+        return;
+    }
+
+    // Use gpioset (simplest) or sysfs
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "/usr/bin/gpioset %d %d=%d 2>/dev/null", chip, line, value);
+    int ret = system(cmd);
+
+    http_ok(fd, "application/json; charset=utf-8");
+    char resp[128];
+    snprintf(resp, sizeof(resp), "{\"ok\":%s,\"chip\":%d,\"line\":%d,\"value\":%d}",
+             ret == 0 ? "true" : "false", chip, line, value);
+    dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(resp), resp);
+}
+
+// POST /api/control/reboot
+static void handle_control_reboot(int fd, const char *body, int body_len) {
+    (void)body; (void)body_len;
+    http_ok(fd, "application/json; charset=utf-8");
+    const char *resp = "{\"ok\":true,\"action\":\"rebooting\"}";
+    dprintf(fd, "Content-Length: %zu\r\n\r\n%s", strlen(resp), resp);
+    sync();
+    system("/sbin/reboot &");
+}
 static const char DASHBOARD_HTML[] =
     "<!DOCTYPE html>\n"
     "<html lang=\"en\">\n"
@@ -519,6 +698,16 @@ static const char DASHBOARD_HTML[] =
     ".proc-row .mem{color:#94a3b8;font-family:monospace}\n"
     ".footer{text-align:center;padding:16px;color:#475569;font-size:12px}\n"
     ".error{color:#fca5a5;font-size:12px}\n"
+    ".btn{padding:6px 14px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;margin:2px}\n"
+    ".btn-on{background:#10b981;color:#fff}\n"
+    ".btn-off{background:#ef4444;color:#fff}\n"
+    ".btn-blink{background:#f59e0b;color:#000}\n"
+    ".btn-reboot{background:#dc2626;color:#fff}\n"
+    ".btn:active{opacity:.8}\n"
+    ".slider{width:100px;margin:0 8px;vertical-align:middle}\n"
+    ".row{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}\n"
+    ".row label{min-width:70px;color:#94a3b8}\n"
+    ".row .val{color:#e2e8f0;font-family:monospace;min-width:40px;text-align:right}\n"
     "</style>\n"
     "</head>\n"
     "<body>\n"
@@ -534,6 +723,15 @@ static const char DASHBOARD_HTML[] =
     "<div class=\"card\"><h2>Network</h2><div id=\"net-info\">loading...</div></div>\n"
     "<div class=\"card\"><h2>Processes</h2><div id=\"proc-info\">loading...</div></div>\n"
     "<div class=\"card\"><h2>Health</h2><div id=\"health-info\">loading...</div></div>\n"
+    "<div class=\"card\"><h2>LED Control</h2><div id=\"led-info\"></div>\n"
+    "<div class=\"row\"><label>Backlight 0</label><input type=\"range\" min=\"0\" max=\"255\" value=\"0\" class=\"slider\" id=\"led0-slider\" oninput=\"setLED('white:backlight-0',this.value)\"><span class=\"val\" id=\"led0-val\">0</span>\n"
+    "<button class=\"btn btn-on\" onclick=\"setLED('white:backlight-0','255');document.getElementById('led0-slider').value=255\">ON</button><button class=\"btn btn-off\" onclick=\"setLED('white:backlight-0','0');document.getElementById('led0-slider').value=0\">OFF</button></div>\n"
+    "<div class=\"row\"><label>Backlight 1</label><input type=\"range\" min=\"0\" max=\"255\" value=\"0\" class=\"slider\" id=\"led1-slider\" oninput=\"setLED('white:backlight-1',this.value)\"><span class=\"val\" id=\"led1-val\">0</span>\n"
+    "<button class=\"btn btn-on\" onclick=\"setLED('white:backlight-1','255');document.getElementById('led1-slider').value=255\">ON</button><button class=\"btn btn-off\" onclick=\"setLED('white:backlight-1','0');document.getElementById('led1-slider').value=0\">OFF</button></div>\n"
+    "</div>\n"
+    "<div class=\"card\"><h2>System Control</h2>\n"
+    "<button class=\"btn btn-reboot\" onclick=\"if(confirm('Reboot the board?'))fetch('/api/control/reboot',{method:'POST'})\">Reboot</button>\n"
+    "</div>\n"
     "</div>\n"
     "<div class=\"footer\">i.MX95 Building Blocks &mdash; Refresh: <span id=\"refresh-timer\">0</span>s ago</div>\n"
     "<script>\n"
@@ -544,6 +742,22 @@ static const char DASHBOARD_HTML[] =
     "  var c=cls||(pct>90?'fill-red':pct>70?'fill-yellow':'fill-green');"
     "  return '<div class=\"bar\"><div class=\"fill '+c+'\" style=\"width:'+Math.min(100,pct)+'%\"></div></div>';}\n"
     "async function fetchJSON(url){try{var r=await fetch(url);if(!r.ok)throw Error(r.status);return await r.json();}catch(e){return null;}}\n"
+    "async function setLED(name,val){\n"
+    "  document.getElementById('led0-val').textContent=val;\n"
+    "  document.getElementById('led1-val').textContent=val;\n"
+    "  await fetch('/api/control/led',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'led='+encodeURIComponent(name)+'&brightness='+val});\n"
+    "}\n"
+    "async function refreshLEDs(){\n"
+    "  var leds=await fetchJSON('/api/leds');\n"
+    "  if(leds){var h='';\n"
+    "    for(var i=0;i<leds.length;i++){var l=leds[i];\n"
+    "      h+=kv(l.name,(l.brightness||0)+'/'+(l.max||255)+' ['+(l.trigger||'?')+']');\n"
+    "      if(l.name=='white:backlight-0'){document.getElementById('led0-slider').value=l.brightness||0;document.getElementById('led0-val').textContent=l.brightness||0;}\n"
+    "      if(l.name=='white:backlight-1'){document.getElementById('led1-slider').value=l.brightness||0;document.getElementById('led1-val').textContent=l.brightness||0;}\n"
+    "    }\n"
+    "    document.getElementById('led-info').innerHTML=h||'none';\n"
+    "  }\n"
+    "}\n"
     "async function refresh(){\n"
     "  var data=await fetchJSON('/api/system');\n"
     "  if(data){\n"
@@ -613,9 +827,10 @@ static const char DASHBOARD_HTML[] =
     "    }"
     "    document.getElementById('proc-info').innerHTML=pi||'<span class=error>none</span>';"
     "  }\n"
+    "  refreshLEDs();\n"
     "  lastRefresh=0;\n"
     "}\n"
-    "setInterval(function(){lastRefresh++;document.getElementById('refresh-timer').textContent=lastRefresh*3;refresh();},3000);\n"
+    "setInterval(function(){lastRefresh++;document.getElementById('refresh-timer').textContent=lastRefresh*10;refresh();},10000);\n"
     "refresh();\n"
     "</script>\n"
     "</body>\n"
@@ -636,8 +851,23 @@ static const route_t routes[] = {
     {"GET", "/api/processes",  handle_api_processes},
     {"GET", "/api/logs",       handle_api_logs},
     {"GET", "/api/health",     handle_api_health},
+    {"GET", "/api/leds",       handle_api_leds},
+    {"GET", "/api/gpio",       handle_api_gpio},
     {NULL, NULL, NULL}
 };
+
+// POST route: path prefix match, then call handler with full body
+static int handle_post_route(int fd, const char *path, const char *body, int body_len) {
+    if (strcmp(path, "/api/control/led") == 0)
+        handle_control_led(fd, body, body_len);
+    else if (strcmp(path, "/api/control/gpio") == 0)
+        handle_control_gpio(fd, body, body_len);
+    else if (strcmp(path, "/api/control/reboot") == 0)
+        handle_control_reboot(fd, body, body_len);
+    else
+        return 0; // no POST handler matched
+    return 1;
+}
 
 static void serve_dashboard(int fd) {
     http_ok(fd, "text/html; charset=utf-8");
@@ -703,25 +933,45 @@ static void handle_request(int fd, const char *data, int len) {
         return;
     }
 
-    if (strcmp(req.method, "GET") != 0) {
+    // GET routes
+    if (strcmp(req.method, "GET") == 0) {
+        for (const route_t *r = routes; r->method; r++) {
+            if (strcmp(req.path, r->path) == 0) {
+                r->handler(fd);
+                return;
+            }
+        }
+        // Static file or dashboard
+        if (strcmp(req.path, "/") == 0 || strcmp(req.path, "/index.html") == 0)
+            serve_dashboard(fd);
+        else
+            serve_static_file(fd, req.path);
+        return;
+    }
+
+    // POST routes - extract body after headers
+    if (strcmp(req.method, "POST") == 0) {
+        // Find body: it starts after headers (\r\n\r\n)
+        const char *hdr_end = memmem(data, len, "\r\n\r\n", 4);
+        if (!hdr_end) { http_server_error(fd, "Incomplete request"); return; }
+        const char *body = hdr_end + 4;
+        int body_len = len - (body - data);
+        if (body_len < 0) body_len = 0;
+
+        // Also try to parse Content-Length and trim body
+        const char *cl = strcasestr(data, "Content-Length:");
+        if (cl) {
+            int clen = atoi(cl + 15);
+            if (clen < body_len) body_len = clen;
+        }
+
+        if (handle_post_route(fd, req.path, body, body_len))
+            return;
         http_method_not_allowed(fd);
         return;
     }
 
-    // Route matching
-    for (const route_t *r = routes; r->method; r++) {
-        if (strcmp(req.path, r->path) == 0) {
-            r->handler(fd);
-            return;
-        }
-    }
-
-    // Static file or dashboard
-    if (strcmp(req.path, "/") == 0 || strcmp(req.path, "/index.html") == 0) {
-        serve_dashboard(fd);
-    } else {
-        serve_static_file(fd, req.path);
-    }
+    http_method_not_allowed(fd);
 }
 
 // ---- Client state ----
@@ -816,7 +1066,14 @@ int main(int argc, char **argv) {
                     char *body = strstr(c->buf, "\r\n\r\n");
                     if (body) {
                         int hdr_end = (int)(body - c->buf) + 4;
-                        handle_request(c->fd, c->buf, hdr_end);
+                        // If POST, wait for full body (Content-Length)
+                        char *cl = strcasestr(c->buf, "Content-Length:");
+                        if (cl) {
+                            int expected = atoi(cl + 15);
+                            int body_len = c->buf_len - hdr_end;
+                            if (body_len < expected) continue; // wait for more data
+                        }
+                        handle_request(c->fd, c->buf, c->buf_len);
                         // HTTP/1.0 style: close after response
                         remove_client(epfd, cidx);
                     } else if (c->buf_len > 8192) {
