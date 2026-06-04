@@ -1,6 +1,6 @@
 [Unit]
 Description=Building Blocks - Web Dashboard
-Documentation=https://github.com/hfgdwuyi/imx95-building-blocks
+Documentation=https://github.com/hfgdwuyi/nxp-imx95-building-blocks
 After=network.target bb-busd.service
 Wants=network.target bb-busd.service
 
