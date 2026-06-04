@@ -615,7 +615,7 @@ static const char DASHBOARD_HTML[] =
     "  }\n"
     "  lastRefresh=0;\n"
     "}\n"
-    "setInterval(function(){lastRefresh++;document.getElementById('refresh-timer').textContent=lastRefresh*5;if(lastRefresh>=12)refresh();},5000);\n"
+    "setInterval(function(){lastRefresh++;document.getElementById('refresh-timer').textContent=lastRefresh*3;refresh();},3000);\n"
     "refresh();\n"
     "</script>\n"
     "</body>\n"
